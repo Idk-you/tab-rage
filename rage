@@ -1,0 +1,401 @@
+RageTab = Window:Tab("rage")
+
+AimSection = RageTab:Section("aimbot", "Left")
+local _togAimEnabled = AimSection:Toggle({Title = "enabled", Flag = "AimEnabled", Default = false})
+_togAimEnabled:Keybind({Title = "hold key", Flag = "AimKey", Key = Enum.UserInputType.MouseButton2, StateType = "Hold", Callback = function(state) _togAimEnabled:Set(state) end})
+AimSection:Toggle({Title = "velocity prediction", Flag = "AimPred", Default = false})
+AimSection:Toggle({Title = "sticky aim", Flag = "AimSticky", Default = false})
+AimSection:Toggle({Title = "visible only", Flag = "AimVisible", Default = false})
+AimSection:Toggle({Title = "team check", Flag = "AimTeam", Default = false})
+AimSection:Dropdown({Title = "bone", Flag = "AimBone", List = {"Head","Neck","Torso","Pelvis","LowerTorso"}, Default = "Head"})
+AimSection:Toggle({Title = "show fov circle", Flag = "AimShowFov", Default = false})
+AimSection:Slider({Title = "fov", Flag = "AimFOV", Symbol = "deg", Default = 35, Min = 5, Max = 180, Decimals = 1})
+AimSection:Slider({Title = "max distance", Flag = "AimDist", Symbol = "m", Default = 5000, Min = 100, Max = 10000, Decimals = 1})
+AimSection:Slider({Title = "prediction time", Flag = "AimPredTime", Symbol = "s", Default = 12, Min = 0, Max = 50, Decimals = 1})
+AimSection:Slider({Title = "smoothness", Flag = "AimSmooth", Symbol = "%", Default = 15, Min = 0, Max = 95, Decimals = 1})
+
+WeapSection = RageTab:Section("weapon mods", "Left")
+WeapSection:Toggle({Title = "no spread", Flag = "WepNoSpread", Default = false, Callback = function(s)
+    ModS.noSpread = s
+    if s then
+        local af = ReplicatedStorage:FindFirstChild("AmmoTypes")
+        if af then for _, item in ipairs(af:GetChildren()) do
+            if item:IsA("Folder") then
+                item:SetAttribute("MinSpread", 0.0001)
+                item:SetAttribute("MaxSpread", 0.0001)
+                item:SetAttribute("ProjectileSpread", 0.0001)
+            end
+        end end
+    end
+end})
+WeapSection:Toggle({Title = "no recoil", Flag = "WepNoRecoil", Default = false, Callback = function(s)
+    ModS.noRecoil = s
+    if s then
+        local af = ReplicatedStorage:FindFirstChild("AmmoTypes")
+        if af then for _, item in ipairs(af:GetChildren()) do
+            if item:IsA("Folder") then
+                item:SetAttribute("RecoilStrength", 0)
+            end
+        end end
+    end
+end})
+WeapSection:Toggle({Title = "no jump tilt", Flag = "NoJumpTilt", Default = false, Callback = function(s)
+    _applyNoJumpTilt(s)
+end})
+WeapSection:Toggle({Title = "water dmg bypass", Flag = "WaterBypass", Default = false, Callback = function(s)
+    _applyWaterBypass(s)
+end})
+WeapSection:Toggle({Title = "instant equip", Flag = "InstantEquip", Default = false})
+WeapSection:Toggle({Title = "no muzzle flash", Flag = "NoMuzzle", Default = false})
+WeapSection:Toggle({Title = "instant mag refill", Flag = "InstantMag", Callback = function(s)
+    BrzS.instantMagRefill = s
+    if s then
+        task.spawn(function()
+            local rs = ReplicatedStorage
+            local function _gat(x, y)
+                local il = rs:FindFirstChild("ItemsList")
+                if il and il:FindFirstChild(x.Name) then
+                    local ip = il[x.Name]:FindFirstChild("ItemProperties")
+                    if not ip then return nil end
+                    if y == "mag"  then return ip:GetAttribute("AmmoType") end
+                    if y == "ammo" and ip:GetAttribute("ItemType") == "Ammo" then
+                        return ip:GetAttribute("SlotType")
+                    end
+                end
+                return nil
+            end
+            local function _gmax(x)
+                local il = rs:FindFirstChild("ItemsList")
+                if il and il:FindFirstChild(x.Name) then
+                    local ip = il[x.Name]:FindFirstChild("ItemProperties")
+                    if ip then return ip:GetAttribute("MaxLoadedAmmo") or 0 end
+                end
+                return 0
+            end
+            local remote = rs:FindFirstChild("Remotes") and rs.Remotes:FindFirstChild("InventoryMove")
+            while BrzS.instantMagRefill do
+                task.wait(0.5)
+                pcall(function()
+                    local inv = rs.Players and rs.Players:FindFirstChild(player.Name)
+                             and rs.Players[player.Name]:FindFirstChild("Inventory")
+                    if not inv or not remote then return end
+                    local mags, ammos = {}, {}
+                    for _, v in ipairs(inv:GetChildren()) do
+                        local slot = v:GetAttribute("Slot")
+                        if slot and slot:lower():find("clothing") then
+                            local ci = v:FindFirstChild("Inventory")
+                            if ci then
+                                for _, x in ipairs(ci:GetChildren()) do
+                                    local loaded = x:GetAttribute("LoadedAmmo")
+                                    if loaded ~= nil then
+                                        local mt = _gat(x, "mag")
+                                        if mt and loaded < _gmax(x) then
+                                            table.insert(mags, {item=x, ammoType=mt, slot=x:GetAttribute("Slot"), parent=ci})
+                                        end
+                                    else
+                                        local at = _gat(x, "ammo")
+                                        if at then table.insert(ammos, {item=x, slotType=at, slot=x:GetAttribute("Slot"), parent=ci}) end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    for _, mag in ipairs(mags) do
+                        for _, ammo in ipairs(ammos) do
+                            if mag.ammoType == ammo.slotType then
+                                pcall(function() remote:FireServer(ammo.slot, mag.slot, ammo.parent, mag.parent) end)
+                                task.wait(); break
+                            end
+                        end
+                    end
+                end)
+            end
+        end)
+    end
+end})
+
+WeapSection:Toggle({Title = "no bullet drop", Flag = "NoBulletDrop", Default = false, Callback = function(s)
+    BrzS.noBulletDrop = s
+    local af = ReplicatedStorage:FindFirstChild("AmmoTypes")
+    if af then
+        for _, item in ipairs(af:GetChildren()) do
+            if s then
+                if not BrzS._bdOrig[item] then BrzS._bdOrig[item] = item:GetAttribute("ProjectileDrop") end
+                item:SetAttribute("ProjectileDrop", 0)
+            else
+                if BrzS._bdOrig[item] ~= nil then item:SetAttribute("ProjectileDrop", BrzS._bdOrig[item]) end
+            end
+        end
+    end
+end})
+
+
+
+-- ─── fast bullet ──────────────────────────────────────────────────
+do
+    local _fbEnabled = false
+    local _fbOldNC = nil
+    local _fbHooked = false
+
+    local function _hookFastBullet()
+        if _fbHooked then return end
+        local ok = pcall(function()
+            local FireProjectile  = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("FireProjectile")
+            local ProjectileInflict = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("ProjectileInflict")
+            if not (FireProjectile and ProjectileInflict) then return end
+            if not (hookmetamethod and getnamecallmethod) then return end
+            _fbOldNC = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+                if not checkcaller() then
+                    local method = getnamecallmethod()
+                    local args = {...}
+                    if _fbEnabled and self == FireProjectile and method == "InvokeServer" then
+                        local shot_id = args[2]
+                        local shot_time = args[3]
+                        task.spawn(function()
+                            pcall(function()
+                                ProjectileInflict:InvokeServer(Vector3.new(0,0,0), shot_id, shot_time, 0)
+                            end)
+                        end)
+                    end
+                end
+                return _fbOldNC(self, ...)
+            end))
+            _fbHooked = true
+        end)
+        if not ok then
+            pcall(function()
+                -- fallback: getrawmetatable
+                local mt = getrawmetatable(game)
+                if mt and setreadonly then
+                    setreadonly(mt, false)
+                    local _old = mt.__namecall
+                    mt.__namecall = newcclosure(function(self, ...)
+                        if not checkcaller() then
+                            local method = getnamecallmethod()
+                            local args = {...}
+                            local FireProjectile  = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("FireProjectile")
+                            local ProjectileInflict = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("ProjectileInflict")
+                            if _fbEnabled and FireProjectile and ProjectileInflict and self == FireProjectile and method == "InvokeServer" then
+                                local shot_id = args[2]; local shot_time = args[3]
+                                task.spawn(function() pcall(function() ProjectileInflict:InvokeServer(Vector3.new(0,0,0), shot_id, shot_time, 0) end) end)
+                            end
+                        end
+                        return _old(self, ...)
+                    end)
+                    setreadonly(mt, true)
+                    _fbHooked = true
+                end
+            end)
+        end
+    end
+
+    WeapSection:Toggle({Title = "fast bullet", Flag = "WepFastBullet", Default = false, Callback = function(s)
+        _fbEnabled = s
+        if s then task.spawn(_hookFastBullet) end
+    end})
+end
+
+-- ─── no sway ──────────────────────────────────────────────────────
+do
+    local _swayEnabled = false
+    local _swayPatched = false
+
+    local function _patchSway()
+        if _swayPatched then return end
+        pcall(function()
+            local rs = ReplicatedStorage
+            local success, mod = pcall(require, rs:FindFirstChild("Modules") and rs.Modules:FindFirstChild("FPS"))
+            if success and mod and mod.updateClient then
+                local old_update = mod.updateClient
+                mod.updateClient = function(a1, a2, a3)
+                    local r1, r2, r3 = old_update(a1, a2, a3)
+                    if _swayEnabled and a1 and a1.springs then
+                        for _, spring in pairs(a1.springs) do
+                            if spring.Position then spring.Position = Vector3.new() end
+                            if spring.Speed then spring.Speed = 0 end
+                        end
+                    end
+                    return r1, r2, r3
+                end
+                _swayPatched = true
+            end
+        end)
+    end
+
+    WeapSection:Toggle({Title = "no sway", Flag = "WepNoSway", Default = false, Callback = function(s)
+        _swayEnabled = s
+        if s then task.spawn(_patchSway) end
+    end})
+end
+
+-- ─── unlock firemodes ─────────────────────────────────────────────
+do
+    local _fmEnabled = false
+    local _fmModules = {}
+    local _fmOriginals = {}
+    local _fmCached = false
+
+    local function _fmCache()
+        table.clear(_fmModules); table.clear(_fmOriginals); _fmCached = false
+        local items = ReplicatedStorage:FindFirstChild("ItemsList")
+        if not items then return end
+        for _, v in ipairs(items:GetDescendants()) do
+            if v:IsA("ModuleScript") and v.Name == "SettingsModule" then
+                local ok, mod = pcall(require, v)
+                if ok and type(mod) == "table" then
+                    _fmModules[#_fmModules+1] = mod
+                    if type(mod.FireModes) == "table" then
+                        local copy = {}
+                        for i, m in ipairs(mod.FireModes) do copy[i] = m end
+                        _fmOriginals[mod] = copy
+                    end
+                end
+            end
+        end
+        _fmCached = true
+    end
+
+    WeapSection:Toggle({Title = "unlock firemodes", Flag = "WepUnlockFiremodes", Default = false, Callback = function(s)
+        _fmEnabled = s
+        if s then
+            if not _fmCached then task.spawn(_fmCache) end
+            task.spawn(function()
+                if not _fmCached then task.wait(1) end
+                for _, mod in ipairs(_fmModules) do
+                    pcall(function() mod.FireModes = {"Auto","Semi"} end)
+                end
+            end)
+        else
+            for mod, modes in pairs(_fmOriginals) do
+                pcall(function() mod.FireModes = modes end)
+            end
+        end
+    end})
+end
+
+-- ─── rpm booster ──────────────────────────────────────────────────
+do
+    local _rpmEnabled = false
+    local _rpmInterval = 0.05
+    local _rpmModules = {}
+    local _rpmOrig = {}
+
+    local function _rpmCache()
+        table.clear(_rpmModules); table.clear(_rpmOrig)
+        local items = ReplicatedStorage:FindFirstChild("ItemsList")
+        if not items then return end
+        for _, v in ipairs(items:GetDescendants()) do
+            if v:IsA("ModuleScript") and v.Name == "SettingsModule" then
+                local ok, mod = pcall(require, v)
+                if ok and type(mod) == "table" and type(mod.FireRate) == "number" then
+                    _rpmModules[#_rpmModules+1] = mod
+                    _rpmOrig[mod] = mod.FireRate
+                end
+            end
+        end
+    end
+
+    local function _rpmApply()
+        for _, mod in ipairs(_rpmModules) do
+            pcall(function() mod.FireRate = _rpmInterval end)
+        end
+    end
+
+    local function _rpmRestore()
+        for mod, rate in pairs(_rpmOrig) do
+            pcall(function() mod.FireRate = rate end)
+        end
+    end
+
+    WeapSection:Toggle({Title = "rpm booster", Flag = "WepRPMBoost", Default = false, Callback = function(s)
+        _rpmEnabled = s
+        if s then task.spawn(function() _rpmCache(); _rpmApply() end)
+        else _rpmRestore() end
+    end})
+    WeapSection:Slider({Title = "firerate (lower = faster)", Flag = "WepRPMVal", Symbol = "", Default = 5, Min = 0, Max = 10, Decimals = 2, Callback = function(v)
+        _rpmInterval = v / 100
+        if _rpmEnabled then _rpmApply() end
+    end})
+end
+
+
+
+local SASection = RageTab:Section("silent aim", "Right")
+local _togSilentAim = SASection:Toggle({Title = "silent aim", Flag = "SilentAim", Default = false, Callback = function(s)
+    _SA.silentAimbot = s
+    _SA.enabled      = s
+end})
+
+SASection:Toggle({Title = "target players", Flag = "SilentPlayers", Default = false, Callback = function(s)
+    _SA.targetPlayers = s
+end})
+SASection:Toggle({Title = "target AI / bots", Flag = "SilentAI", Default = false, Callback = function(s)
+    _SA.targetAI = s
+end})
+SASection:Toggle({Title = "randomize hit part", Flag = "SilentRandPart", Default = false, Callback = function(s)
+    _SA.randomizePart = s
+end})
+SASection:Toggle({Title = "nearest part", Flag = "SilentNearPart", Default = false, Callback = function(s)
+    _SA.nearestPart = s
+end})
+SASection:Toggle({Title = "prediction", Flag = "SilentPredict", Default = false, Callback = function(s)
+    _SA.prediction = s
+end})
+
+SASection:Toggle({Title = "show fov circle", Flag = "SilentShowFov", Default = false, Callback = function(s)
+    _SA.showFov = s
+end})
+SASection:Dropdown({Title = "aim bone", Flag = "SilentBone",
+    List = {"Head","UpperTorso","LowerTorso","HumanoidRootPart","LeftUpperArm","RightUpperArm","LeftUpperLeg","RightUpperLeg"},
+    Default = "Head", Callback = function(v)
+        _SA.aimPart = v
+    end})
+SASection:Slider({Title = "fov size", Flag = "SilentFovSz", Symbol = "px", Default = 150, Min = 20, Max = 600, Decimals = 0, Callback = function(v)
+    _SA.fovSize = v; _SA.actualFov = v
+end})
+SASection:Slider({Title = "hit chance", Flag = "SilentHitChance", Symbol = "%", Default = 100, Min = 1, Max = 100, Decimals = 0, Callback = function(v)
+    _SA.silentChance = v
+end})
+SASection:Slider({Title = "smoothness", Flag = "SilentSmooth", Symbol = "", Default = 1, Min = 1, Max = 20, Decimals = 1, Callback = function(v)
+    _SA.smoothness = v
+end})
+
+SASection:Toggle({Title = "bullet tracers", Flag = "BulletTracers", Default = false, Callback = function(s)
+    BrzS.bulletTracers = s
+end})
+SASection:Slider({Title = "tracer fade time", Flag = "BulletTracerFade", Symbol = "s", Default = 5, Min = 1, Max = 20, Decimals = 0, Callback = function(v)
+    BrzS.bulletTracerFade = v / 10
+end})
+SASection:Toggle({Title = "tracer color", Flag = "BulletTracerColorTog", Default = false}):Colorpicker({Color = Color3.fromRGB(255, 155, 205), Flag = "BulletTracerColor", Callback = function(c)
+    BrzS.bulletTracerColor = c
+end})
+
+local AntiAimSection = RageTab:Section("anti aim", "Right")
+local _togAAEnabled = AntiAimSection:Toggle({Title = "enabled", Flag = "AAEnabled", Default = false, Callback = function(s)
+    _aaEnable(s)
+end})
+_togAAEnabled:Keybind({Title = "toggle key", Flag = "AAKey", Key = Enum.KeyCode.H, StateType = "Toggle", Callback = function() _togAAEnabled:Set(not _togAAEnabled.Toggled) end})
+AntiAimSection:Dropdown({Title = "mode", Flag = "AAMode",
+    List = {"yaw180","jitter","pitch","spin","spinflip"}, Default = "yaw180",
+    Callback = function(v)
+        _AA.mode = v
+    end})
+AntiAimSection:Slider({Title = "jitter angle", Flag = "AAJitterAng", Symbol = "deg", Default = 35, Min = 1, Max = 180, Decimals = 0, Callback = function(v)
+    _AA.jitterAng = v
+end})
+AntiAimSection:Slider({Title = "pitch value", Flag = "AAPitchVal", Symbol = "deg", Default = 89, Min = 0, Max = 89, Decimals = 0, Callback = function(v)
+    _AA.pitchValue = v
+end})
+AntiAimSection:Slider({Title = "spin speed", Flag = "AASpinSpeed", Symbol = "dpt", Default = 12, Min = 1, Max = 60, Decimals = 0, Callback = function(v)
+    _AA.spinSpeed = v
+end})
+
+local UGSection = RageTab:Section("underground resolver", "Right")
+local _togUGEnabled = UGSection:Toggle({Title = "enabled", Flag = "UndergroundEnabled", Default = false, Callback = function(s)
+    _ugEnable((_G.EH_PAID_EXECUTOR and s) or false)
+end})
+_togUGEnabled:Keybind({Title = "toggle key", Flag = "UGKey", Key = Enum.KeyCode.U, StateType = "Toggle", Callback = function() _togUGEnabled:Set(not _togUGEnabled.Toggled) end})
+UGSection:Slider({Title = "depth", Flag = "UndergroundDepth", Symbol = "st", Default = 25, Min = 5, Max = 60, Decimals = 0, Callback = function(v)
+    _UG.depth = v / 10
+    BrzS.undergroundDepth = _UG.depth
+end})
